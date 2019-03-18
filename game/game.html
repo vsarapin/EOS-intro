@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Gamedev Phaser</title>
+    <style>* {
+        padding: 0;
+        margin: 0;
+    }</style>
+    <script src="https://end3r.github.io/Gamedev-Phaser-Content-Kit/demos/js/phaser.2.4.2.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/eosjs@16.0.0/lib/eos.min.js"
+            integrity="sha512-vNyLnOEb7uFmEtVbLnyZQ9/k4zckM2Vu3jJOKq6XfWEVZG0yKcjDExVN4EQ7e3F+rePWRncMolI2xFi/3qo62A=="
+            crossorigin="anonymous"></script>
+
+    <script>
+        eos = Eos(
+            {
+                contractName: "spore.ctr", // Contract name
+                contractSender: "tester", // User executing the contract (should be paired with private key)
+                chainId: "cf057bbfb72640471fd910bcb67639c22df9f92470936cddc1ade0e2f2e7dc4f",
+                keyProvider: ['5J3xX5KXkEjNSmaX15eEQxUCN92r7tbX8zredX1Sk8c6togTjxs'],//['5KGFY9NmRraPRAcYPJVf1TSarQGE8XVaNLFVFKjjquczScxuUi4'], // Your private key
+                httpEndpoint: 'http://127.0.0.1:8888' // EOS http endpoint
+            }
+        );
+    </script>
+</head>
+<body>
+<button id="reset" onclick="reset()">reset coordinated in blockchain</button>
+<script>
+    let game = new Phaser.Game(480, 320, Phaser.AUTO, null, {preload: preload, create: create, update: update});
+
+    let ball;
+    let paddle;
+    let bricks;
+    let newBrick;
+    let brickInfo;
+    let scoreText;
+    let score = 0;
+    let lives = 3;
+    let livesText;
+    let lifeLostText;
+    let playing = false;
+    let startButton;
+
+    function reset() {
+        Object.keys(bricks.children).map(function (item) {
+            eos.contract('spore.ctr')
+                .then(res => {
+                    res.killcoor("tester", Number(item), {authorization: 'tester'})
+                });
+        });
+    }
+
+    function preload() {
+        handleRemoteImagesOnJSFiddle();
+        game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
+        game.scale.pageAlignHorizontally = true;
+        game.scale.pageAlignVertically = true;
+        game.stage.backgroundColor = '#eee';
+        game.load.image('paddle', 'img/paddle.png');
+        game.load.image('brick', 'img/brick.png');
+        game.load.spritesheet('ball', 'img/wobble.png', 20, 20);
+        game.load.spritesheet('button', 'img/button.png', 120, 40);
+    }
+
+    function create() {
+        game.physics.startSystem(Phaser.Physics.ARCADE);
+        game.physics.arcade.checkCollision.down = false;
+        ball = game.add.sprite(game.world.width * 0.5, game.world.height - 25, 'ball');
+        ball.animations.add('wobble', [0, 1, 0, 2, 0, 1, 0, 2, 0], 24);
+        ball.anchor.set(0.5);
+        game.physics.enable(ball, Phaser.Physics.ARCADE);
+        ball.body.collideWorldBounds = true;
+        ball.body.bounce.set(1);
+        ball.checkWorldBounds = true;
+        ball.events.onOutOfBounds.add(ballLeaveScreen, this);
+
+        paddle = game.add.sprite(game.world.width * 0.5, game.world.height - 5, 'paddle');
+        paddle.anchor.set(0.5, 1);
+        game.physics.enable(paddle, Phaser.Physics.ARCADE);
+        paddle.body.immovable = true;
+
+        initBricks();
+
+        let textStyle = {font: '18px Arial', fill: '#0095DD'};
+        scoreText = game.add.text(5, 5, 'Points: 0', textStyle);
+        livesText = game.add.text(game.world.width - 5, 5, 'Lives: ' + lives, textStyle);
+        livesText.anchor.set(1, 0);
+        lifeLostText = game.add.text(game.world.width * 0.5, game.world.height * 0.5, 'Life lost, tap to continue', textStyle);
+        lifeLostText.anchor.set(0.5);
+        lifeLostText.visible = false;
+
+        startButton = game.add.button(game.world.width * 0.5, game.world.height * 0.5, 'button', startGame, this, 1, 0, 2);
+        startButton.anchor.set(0.5);
+    }
+
+    function update() {
+        game.physics.arcade.collide(ball, paddle, ballHitPaddle);
+        game.physics.arcade.collide(ball, bricks, ballHitBrick);
+        if (playing) {
+            paddle.x = game.input.x || game.world.width * 0.5;
+        }
+    }
+
+    function initBricks() {
+        brickInfo = {
+            width: 50,
+            height: 20,
+            count: {
+                row: 7,
+                col: 3
+            },
+            offset: {
+                top: 50,
+                left: 60
+            },
+            padding: 10
+        };
+        bricks = game.add.group();
+        for (let c = 0; c < brickInfo.count.col; c++) {
+            for (let r = 0; r < brickInfo.count.row; r++) {
+                let brickX = (r * (brickInfo.width + brickInfo.padding)) + brickInfo.offset.left;
+                let brickY = (c * (brickInfo.height + brickInfo.padding)) + brickInfo.offset.top;
+
+
+                newBrick = game.add.sprite(brickX, brickY, 'brick');
+                game.physics.enable(newBrick, Phaser.Physics.ARCADE);
+                newBrick.body.immovable = true;
+                newBrick.anchor.set(0.5);
+                bricks.add(newBrick);
+            }
+        }
+    }
+
+    function ballHitBrick(ball, brick) {
+        console.log(brick.position);
+        let killTween = game.add.tween(brick.scale);
+        killTween.to({x: 0, y: 0}, 200, Phaser.Easing.Linear.None);
+        killTween.onComplete.addOnce(function () {
+            brick.kill();
+        }, this);
+        killTween.start();
+        score += 10;
+        Object.keys(bricks.children).map(function (item) {
+            if (bricks.children[item].cameraOffset.x === brick.position.x && bricks.children[item].cameraOffset.y === brick.position.y) {
+                eos.contract('spore.ctr')
+                    .then(res => {
+                        res.killcoor("tester", Number(item), {authorization: 'tester'})
+                    });
+            }
+        });
+        scoreText.setText('Points: ' + score);
+        if (score === brickInfo.count.row * brickInfo.count.col * 10) {
+            alert('You won the game, congratulations!');
+            location.reload();
+        }
+    }
+
+    function ballLeaveScreen() {
+        lives--;
+        if (lives) {
+            livesText.setText('Lives: ' + lives);
+            lifeLostText.visible = true;
+            ball.reset(game.world.width * 0.5, game.world.height - 25);
+            paddle.reset(game.world.width * 0.5, game.world.height - 5);
+            game.input.onDown.addOnce(function () {
+                lifeLostText.visible = false;
+                ball.body.velocity.set(150, -150);
+            }, this);
+        }
+        else {
+            alert('You lost, game over!');
+            location.reload();
+        }
+    }
+
+    function ballHitPaddle(ball, paddle) {
+        ball.animations.play('wobble');
+        ball.body.velocity.x = -1 * 5 * (paddle.x - ball.x);
+    }
+
+    function startGame() {
+        startButton.destroy();
+        Object.keys(bricks.children).map(function (item) {
+            eos.contract('spore.ctr')
+                .then(res => {
+                    res.createcoor("tester", Number(item), Number(bricks.children[item].cameraOffset.x), Number(bricks.children[item].cameraOffset.y), {authorization: 'tester'})
+                });
+        });
+        ball.body.velocity.set(150, -150);
+        playing = true;
+    }
+
+    // this function (needed only on JSFiddle) take care of loading the images from the remote server
+    function handleRemoteImagesOnJSFiddle() {
+        game.load.baseURL = 'https://end3r.github.io/Gamedev-Phaser-Content-Kit/demos/';
+        game.load.crossOrigin = 'anonymous';
+    }
+</script>
+</body>
+</html>
